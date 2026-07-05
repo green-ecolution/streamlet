@@ -319,6 +319,21 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    pub(crate) fn problem_oversized_demand() -> Problem {
+        let base = problem_two_customers();
+        let big = Customer {
+            demand: Liters::new(500.0).unwrap(),
+            ..base.customers()[0]
+        };
+        Problem::new(
+            base.vehicles().to_vec(),
+            base.depots().to_vec(),
+            vec![big, base.customers()[1]],
+            vec![],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn instance_indexes_nodes_in_field_order() {
         let problem = problem_two_customers();
