@@ -58,13 +58,23 @@ impl LoadSegment {
 /// `cum_*` and `prev_end_late` and is folded in by `finalise_back`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DurationSegment {
+    /// Raw accumulated duration of this segment (travel + service + wait).
+    /// Distinct from the [`duration()`](Self::duration) method, which adds
+    /// `cum_duration` and any forced inter-trip wait on top of this field.
     pub(crate) duration: f64,
+    /// Late-arrival penalty accumulated within this segment.
     pub(crate) time_warp: f64,
+    /// Earliest feasible start time of this segment.
     pub(crate) start_early: f64,
+    /// Latest feasible start time of this segment.
     pub(crate) start_late: f64,
+    /// Earliest departure constraint used for multi-trip coordination.
     pub(crate) release_time: f64,
+    /// Folded-in duration total of already-finalized trips.
     pub(crate) cum_duration: f64,
+    /// Folded-in time warp total of already-finalized trips.
     pub(crate) cum_time_warp: f64,
+    /// Latest end time of the previous trip.
     pub(crate) prev_end_late: f64,
 }
 
@@ -146,12 +156,16 @@ impl DurationSegment {
         }
     }
 
+    /// Earliest end time of this trip, separating trip-specific values from
+    /// the folded-in cumulative totals of previously finalized trips.
     pub fn end_early(&self) -> f64 {
         let trip_duration = self.duration() - self.cum_duration;
         let trip_tw = self.time_warp_total() - self.cum_time_warp;
         self.start_early() + trip_duration - trip_tw
     }
 
+    /// Latest end time of this trip, separating trip-specific values from
+    /// the folded-in cumulative totals of previously finalized trips.
     pub fn end_late(&self) -> f64 {
         let trip_duration = self.duration() - self.cum_duration;
         let trip_tw = self.time_warp_total() - self.cum_time_warp;
@@ -163,14 +177,22 @@ impl DurationSegment {
         }
     }
 
+    /// Total effective duration: the minimal duration over all feasible start
+    /// times, including already-finalized trips (`cum_duration`) plus any
+    /// forced depot wait when this trip's earliest start would otherwise
+    /// precede the previous trip's earliest possible end (`prev_end_late`).
+    /// Uses the [`start_early()`](Self::start_early) accessor rather than the
+    /// raw field so that `release_time` is accounted for.
     pub fn duration(&self) -> f64 {
         self.cum_duration + self.duration + f64::max(self.start_early() - self.prev_end_late, 0.0)
     }
 
+    /// Effective earliest start time, clamped by `release_time`.
     pub fn start_early(&self) -> f64 {
         f64::max(self.start_early, self.release_time)
     }
 
+    /// Effective latest start time, clamped by `release_time`.
     pub fn start_late(&self) -> f64 {
         f64::max(self.start_late, self.release_time)
     }
@@ -183,6 +205,9 @@ impl DurationSegment {
     pub fn time_warp_with_max(&self, max_duration: f64) -> f64 {
         let tw = self.time_warp_total();
         let net = self.duration() - tw;
+        // Deliberately uses the raw `start_late` field, not the `start_late()`
+        // accessor: the accessor clamps by `release_time`, which would make
+        // `release_time - start_late` structurally <= 0 and hide the violation.
         tw + f64::max(self.release_time - self.start_late, 0.0) + f64::max(net - max_duration, 0.0)
     }
 
@@ -349,5 +374,27 @@ mod tests {
         assert!(s.is_feasible());
         assert!(s.time_warp_with_max(150.0) > 0.0); // 200 net duration > 150 shift
         assert_eq!(s.time_warp_with_max(300.0), 0.0);
+    }
+
+    #[test]
+    fn duration_empty_is_identity_for_merge() {
+        let x = node(50.0, 60.0, 5.0);
+        assert_eq!(DurationSegment::merge(DurationSegment::EMPTY, x, 0.0), x);
+        assert_eq!(DurationSegment::merge(x, DurationSegment::EMPTY, 0.0), x);
+    }
+
+    #[test]
+    fn two_reloads_accumulate_across_three_trips() {
+        let trip = |seg: DurationSegment| {
+            DurationSegment::merge(seg, node(0.0, f64::INFINITY, 30.0), 20.0)
+        };
+        let t1 = trip(node(0.0, 0.0, 0.0));
+        let t2 = trip(t1.finalise_back());
+        let t3 = trip(t2.finalise_back());
+        // Each trip: 20 travel + 30 service = 50; three trips = 150 total.
+        assert_eq!(t3.duration(), 150.0);
+        assert!(t3.is_feasible());
+        // Third trip cannot start before the second ends (2 x 50).
+        assert_eq!(t3.start_early(), 100.0);
     }
 }
