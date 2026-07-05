@@ -19,6 +19,10 @@ path = "src/lib.rs"
 path = "src/main.rs"
 name = "streamlet"
 
+[[test]]
+name = "api"
+path = "test/api/main.rs"
+
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
