@@ -1,6 +1,23 @@
-[package]
-name = "streamlet"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/server"]
 
-[dependencies]
+[workspace.package]
+version = "0.2.1" # x-release-please-version
+edition = "2024"
+rust-version = "1.88"
+authors = ["Cedrik Hoffmann <choffmann@green-ecolution.de>"]
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/green-ecolution/streamlet"
+homepage = "https://green-ecolution.de"
+publish = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+opt-level = 3
+
+[profile.dev]
+opt-level = 0
+debug = true
