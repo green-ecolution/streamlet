@@ -5,7 +5,11 @@ use crate::solver::route::Instance;
 
 #[derive(Debug, Clone)]
 pub struct SearchLimits {
+    /// Max number of inter-route improvement rounds, each preceded by a full
+    /// intra-route descent. Not a cap on individual moves.
     pub max_iterations: u32,
+    /// Wall-clock budget for the whole search. Checked between moves, so a
+    /// single operator scan may overrun it slightly.
     pub time_limit: StdDuration,
 }
 
@@ -22,19 +26,22 @@ const EPSILON: f64 = 1e-9;
 
 /// Deterministic VND-style descent: cheap intra-route operators first, the
 /// expensive inter-route operators only once the cheap ones are exhausted.
+/// Deterministic provided the time limit is not hit; `max_iterations` bounds
+/// the number of inter-route improvement rounds (each preceded by a full
+/// intra-route descent), not individual moves.
 pub fn improve(instance: &Instance, plan: &mut Plan, limits: &SearchLimits) {
     let deadline = Instant::now() + limits.time_limit;
     for _ in 0..limits.max_iterations {
+        // Full intra-route descent to a local optimum of the cheap operators.
+        while Instant::now() < deadline
+            && (relocate(instance, plan) || swap(instance, plan) || two_opt(instance, plan))
+        {
+        }
         if Instant::now() >= deadline {
             return;
         }
-        let improved_intra =
-            relocate(instance, plan) || swap(instance, plan) || two_opt(instance, plan);
-        if improved_intra {
-            continue; // restart with cheap operators
-        }
         if !improve_inter(instance, plan) {
-            return; // local optimum
+            return; // local optimum of all operators
         }
     }
 }
@@ -458,12 +465,13 @@ mod tests {
     }
 
     #[test]
-    fn refill_reposition_repairs_broken_placement() {
+    fn search_repairs_broken_refill_placement() {
         let problem = crate::solver::route::tests::problem_small_tank_with_refill();
         let instance =
             Instance::new(&problem, &crate::solver::route::tests::uniform_matrix(5)).unwrap();
         // Refill (node 4) placed pointlessly at the very start; with tank 50 and demands
-        // 40+40 the refill is needed BETWEEN the customers, not before them.
+        // 40+40 the refill is needed BETWEEN the customers, not before them. Repaired by
+        // intra relocate, but still a valuable regression test for the repair behaviour.
         let mut plan = Plan {
             routes: vec![VehicleRoute {
                 vehicle: 0,
@@ -478,5 +486,79 @@ mod tests {
             instance.evaluate(0, visits).is_feasible,
             "search must repair refill placement: {visits:?}"
         );
+    }
+
+    #[test]
+    fn useless_refill_is_dropped() {
+        // Tank 100 easily covers 40+40: the refill visit is pure overhead
+        // (+2 legs on a uniform matrix). Only reposition_refills can DROP a
+        // visit, so this pins that operator.
+        let base = crate::solver::route::tests::problem_small_tank_with_refill();
+        let vehicle = Vehicle {
+            tank: Tank::full(Liters::new(100.0).unwrap()),
+            ..base.vehicles()[0]
+        };
+        let problem = Problem::new(
+            vec![vehicle],
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            base.refill_stations().to_vec(),
+        )
+        .unwrap();
+        let instance =
+            Instance::new(&problem, &crate::solver::route::tests::uniform_matrix(5)).unwrap();
+        let mut plan = Plan {
+            routes: vec![VehicleRoute {
+                vehicle: 0,
+                visits: vec![2, 4, 3],
+            }],
+            unserved: vec![],
+        };
+        improve(&instance, &mut plan, &SearchLimits::default());
+        assert_eq!(
+            plan.routes[0].visits,
+            vec![2, 3],
+            "useless refill must be dropped"
+        );
+    }
+
+    #[test]
+    fn pair_move_must_not_break_target_feasibility() {
+        // Two vehicles, tank 50 each; customers 40+40 assigned one per route.
+        // Merging them into one route would cut travel time on this matrix but
+        // overload the target tank — the guard must reject it.
+        let base = crate::solver::route::tests::problem_two_customers_small_tank();
+        let vehicle = |id| Vehicle {
+            id: VehicleId::new(id),
+            ..base.vehicles()[0]
+        };
+        let problem = Problem::new(
+            vec![vehicle(1), vehicle(2)],
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            vec![],
+        )
+        .unwrap();
+        // Node ids: 0,1 vehicles; 2 depot; 3,4 customers.
+        let instance =
+            Instance::new(&problem, &crate::solver::route::tests::uniform_matrix(5)).unwrap();
+        let mut plan = Plan {
+            routes: vec![
+                VehicleRoute {
+                    vehicle: 0,
+                    visits: vec![3],
+                },
+                VehicleRoute {
+                    vehicle: 1,
+                    visits: vec![4],
+                },
+            ],
+            unserved: vec![],
+        };
+        improve(&instance, &mut plan, &SearchLimits::default());
+        for r in &plan.routes {
+            assert!(instance.evaluate(r.vehicle, &r.visits).is_feasible);
+        }
+        assert_eq!(plan.routes.iter().map(|r| r.visits.len()).sum::<usize>(), 2);
     }
 }
