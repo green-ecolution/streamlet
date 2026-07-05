@@ -7,6 +7,14 @@ use crate::http::AppState;
 use crate::http::v1::dto::{SolveRequest, SolveResponse};
 use crate::service::ServiceError;
 
+/// Solves a VRP and returns optimized routes.
+///
+/// Routes always return to the *first* depot in `problem.depots`, regardless
+/// of how many depots are supplied. Customers that cannot be served
+/// feasibly (e.g. demand exceeding tank capacity even with refills) are
+/// reported in the response's `unserved` list rather than failing the
+/// request; the request only fails for structurally invalid problems or
+/// routing-engine errors.
 #[utoipa::path(
     post,
     path = "/v1/solve",

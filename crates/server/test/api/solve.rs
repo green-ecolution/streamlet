@@ -43,3 +43,16 @@ async fn unreachable_engine_maps_to_502() {
     let response = app.post_json("/v1/solve", &solve_request()).await;
     assert_eq!(response.status(), 502);
 }
+
+#[tokio::test]
+async fn unservable_customer_is_reported_not_an_error() {
+    let app = TestApp::spawn().await;
+    mock_valhalla(&app.valhalla, 5).await;
+    let mut request = solve_request();
+    // Demand exceeds tank capacity; no refill can fix a single oversized visit.
+    request["problem"]["customers"][0]["demand"] = serde_json::json!(500.0);
+    let response = app.post_json("/v1/solve", &request).await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["unserved"], serde_json::json!([1]));
+}
