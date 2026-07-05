@@ -41,10 +41,16 @@ pub fn construct(instance: &Instance) -> Plan {
     let mut unserved = vec![];
 
     while !unassigned.is_empty() {
+        let bases: Vec<f64> = routes
+            .iter()
+            .map(|r| instance.evaluate(r.vehicle, &r.visits).travel_time)
+            .collect();
         // Pick the (customer, position) pair with the globally cheapest feasible insertion.
+        // Ties (strict `<`) keep the earliest-evaluated candidate, i.e. the customer's
+        // current position in `unassigned` decides among equal-cost insertions.
         let mut best: Option<(usize, Insertion)> = None;
         for (ci, &customer) in unassigned.iter().enumerate() {
-            if let Some(ins) = best_insertion(instance, &routes, customer) {
+            if let Some(ins) = best_insertion(instance, &routes, &bases, customer) {
                 let better = best
                     .as_ref()
                     .is_none_or(|(_, b)| ins.cost_delta < b.cost_delta);
@@ -76,11 +82,12 @@ pub fn construct(instance: &Instance) -> Plan {
 fn best_insertion(
     instance: &Instance,
     routes: &[VehicleRoute],
+    bases: &[f64],
     customer: usize,
 ) -> Option<Insertion> {
     let mut best: Option<Insertion> = None;
     for (ri, route) in routes.iter().enumerate() {
-        let base = instance.evaluate(route.vehicle, &route.visits).travel_time;
+        let base = bases[ri];
         for pos in 0..=route.visits.len() {
             let mut candidate = route.visits.clone();
             candidate.insert(pos, customer);
@@ -120,6 +127,8 @@ fn best_insertion(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::*;
+    use crate::matrix::CostMatrix;
     use crate::solver::route::Instance;
     use crate::solver::route::tests::{
         problem_oversized_demand, problem_small_tank_with_refill, problem_two_customers,
@@ -158,5 +167,93 @@ mod tests {
         let instance = Instance::new(&problem, &uniform_matrix(4)).unwrap();
         let plan = construct(&instance);
         assert_eq!(plan.unserved.len(), 1);
+    }
+
+    #[test]
+    fn inserts_refill_first_for_partially_filled_tank() {
+        // Tank 100 at level 10; single 90L customer -> construct must refill first.
+        let base = problem_small_tank_with_refill();
+        let vehicle = Vehicle {
+            tank: Tank::new(Liters::new(100.0).unwrap(), Liters::new(10.0).unwrap()).unwrap(),
+            ..base.vehicles()[0]
+        };
+        let customers = vec![Customer {
+            demand: Liters::new(90.0).unwrap(),
+            ..base.customers()[0]
+        }];
+        let problem = Problem::new(
+            vec![vehicle],
+            base.depots().to_vec(),
+            customers,
+            base.refill_stations().to_vec(),
+        )
+        .unwrap();
+        // Node ids: 0 vehicle, 1 depot, 2 customer, 3 refill.
+        let instance = Instance::new(&problem, &uniform_matrix(4)).unwrap();
+        let plan = construct(&instance);
+        assert!(plan.unserved.is_empty());
+        assert_eq!(
+            plan.routes[0].visits,
+            vec![3, 2],
+            "refill must precede the customer"
+        );
+    }
+
+    #[test]
+    fn oversized_demand_stays_unserved_even_with_refill_available() {
+        // 500L demand > 100L capacity: no refill can help a single visit.
+        let base = problem_oversized_demand();
+        let refill = RefillStation {
+            id: RefillStationId::new(1),
+            location: Coordinate::new(54.0, 9.0).unwrap(),
+            refill_duration: Duration::new(120.0).unwrap(),
+        };
+        let problem = Problem::new(
+            base.vehicles().to_vec(),
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            vec![refill],
+        )
+        .unwrap();
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        let plan = construct(&instance);
+        assert_eq!(plan.unserved.len(), 1);
+    }
+
+    #[test]
+    fn customers_go_to_the_nearer_vehicle() {
+        // Two vehicles on a line at 0 and 100; customers at 1 and 99; depot at 50.
+        // Node ids: 0,1 vehicles; 2 depot; 3,4 customers.
+        let base = problem_two_customers();
+        let vehicle = |id| Vehicle {
+            id: VehicleId::new(id),
+            ..base.vehicles()[0]
+        };
+        let problem = Problem::new(
+            vec![vehicle(1), vehicle(2)],
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            vec![],
+        )
+        .unwrap();
+        let pos: [f64; 5] = [0.0, 100.0, 50.0, 1.0, 99.0];
+        let time: Vec<Vec<f64>> = pos
+            .iter()
+            .map(|a| pos.iter().map(|b| (a - b).abs()).collect())
+            .collect();
+        let matrix = CostMatrix::new(time.clone(), time).unwrap();
+        let instance = Instance::new(&problem, &matrix).unwrap();
+        let plan = construct(&instance);
+        assert!(plan.unserved.is_empty());
+        assert_eq!(
+            plan.routes[0].visits,
+            vec![3],
+            "vehicle at 0 serves customer at 1"
+        );
+        assert_eq!(
+            plan.routes[1].visits,
+            vec![4],
+            "vehicle at 100 serves customer at 99"
+        );
     }
 }
