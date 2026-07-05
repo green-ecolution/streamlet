@@ -7,7 +7,7 @@ pub struct NodeIndex(pub usize);
 #[derive(Debug, thiserror::Error)]
 pub enum MatrixError {
     #[error(
-        "matrix must be square and equally sized, got {time}x? time and {distance}x? distance rows"
+        "time matrix is {time}x?, distance matrix is {distance}x?, both must be square and equal size"
     )]
     Shape { time: usize, distance: usize },
     #[error("matrix values must be finite and non-negative")]
@@ -16,6 +16,7 @@ pub enum MatrixError {
 
 /// Square travel-time (seconds) and distance (meters) matrix over problem nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "CostMatrixRaw")]
 pub struct CostMatrix {
     travel_time: Vec<Vec<f64>>,
     distance: Vec<Vec<f64>>,
@@ -49,12 +50,28 @@ impl CostMatrix {
         self.len() == 0
     }
 
+    /// Panics if an index is out of bounds.
     pub fn travel_time(&self, from: NodeIndex, to: NodeIndex) -> f64 {
         self.travel_time[from.0][to.0]
     }
 
+    /// Panics if an index is out of bounds.
     pub fn distance(&self, from: NodeIndex, to: NodeIndex) -> f64 {
         self.distance[from.0][to.0]
+    }
+}
+
+#[derive(Deserialize)]
+struct CostMatrixRaw {
+    travel_time: Vec<Vec<f64>>,
+    distance: Vec<Vec<f64>>,
+}
+
+impl TryFrom<CostMatrixRaw> for CostMatrix {
+    type Error = MatrixError;
+
+    fn try_from(value: CostMatrixRaw) -> Result<Self, Self::Error> {
+        Self::new(value.travel_time, value.distance)
     }
 }
 
@@ -89,5 +106,49 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn deserialize_validates_matrix() {
+        assert!(
+            serde_json::from_str::<CostMatrix>(
+                r#"{"travel_time":[[0.0,1.0],[2.0]],"distance":[[0.0,1.0],[1.0,0.0]]}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<CostMatrix>(
+                r#"{"travel_time":[[0.0,-1.0],[2.0,0.0]],"distance":[[0.0,1.0],[1.0,0.0]]}"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<CostMatrix>(
+                r#"{"travel_time":[[0.0,1.0],[2.0,0.0]],"distance":[[0.0,1.0],[1.0,0.0]]}"#
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_square_matrices_of_different_sizes() {
+        assert!(
+            CostMatrix::new(
+                vec![vec![0.0, 1.0], vec![2.0, 0.0]],
+                vec![
+                    vec![0.0, 1.0, 2.0],
+                    vec![1.0, 0.0, 2.0],
+                    vec![2.0, 1.0, 0.0]
+                ]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn zero_size_matrix_is_valid_and_empty() {
+        let m = CostMatrix::new(vec![], vec![]).unwrap();
+        assert_eq!(m.len(), 0);
+        assert!(m.is_empty());
     }
 }
