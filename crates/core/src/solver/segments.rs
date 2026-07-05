@@ -4,7 +4,7 @@
 pub struct LoadSegment {
     /// Total demand delivered within this segment.
     pub delivery: f64,
-    /// Running load at the end of the segment. Negative for reload markers.
+    /// Running load at the end of the segment.
     pub load: f64,
     /// Capacity excess accumulated in already-finalized trips.
     pub excess: f64,
@@ -21,20 +21,6 @@ impl LoadSegment {
         Self {
             delivery: demand,
             load: demand,
-            excess: 0.0,
-        }
-    }
-
-    /// A reload resets the running load: encoded as negative load so that
-    /// `merge`'s `max` drops everything accumulated before the reload.
-    /// Delivery is -infinity, not 0, so the drop holds regardless of how much
-    /// was delivered before the reload (a finite marker like `-capacity`
-    /// would let a large-enough prior load "leak" through and understate
-    /// excess after the reload).
-    pub fn from_reload(capacity: f64) -> Self {
-        Self {
-            delivery: f64::NEG_INFINITY,
-            load: -capacity,
             excess: 0.0,
         }
     }
@@ -93,12 +79,24 @@ mod tests {
     }
 
     #[test]
-    fn reload_resets_running_load() {
-        let before = LoadSegment::from_customer(90.0);
-        let after_reload = LoadSegment::merge(before, LoadSegment::from_reload(CAP));
-        let s = LoadSegment::merge(after_reload, LoadSegment::from_customer(60.0));
-        // 90 + 60 = 150 > 100, but the reload in between makes it feasible
+    fn finalize_models_reload_reset() {
+        // customer(90) -> reload -> customer(60): 150 total but feasible with cap 100
+        let s = LoadSegment::merge(
+            LoadSegment::from_customer(90.0).finalize(CAP),
+            LoadSegment::from_customer(60.0),
+        );
         assert!(s.is_feasible(CAP));
+    }
+
+    #[test]
+    fn excess_before_reload_is_not_forgotten() {
+        // customer(130) violates cap 100 before the reload; reload must not absolve it
+        let s = LoadSegment::merge(
+            LoadSegment::from_customer(130.0).finalize(CAP),
+            LoadSegment::from_customer(60.0),
+        );
+        assert_eq!(s.excess_load(CAP), 30.0);
+        assert!(!s.is_feasible(CAP));
     }
 
     #[test]
