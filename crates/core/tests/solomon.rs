@@ -126,17 +126,21 @@ fn assert_instance(name: &str, bks: f64, max_gap: f64) {
     );
 }
 
+// Measured baseline (2026-07-05, default SolveOptions, release build):
+// c101 854.31 (gap 3.1%), r101 1682.58 (gap 1.9%), rc101 1722.32 (gap 1.5%).
+// The 5% bound is measured-plus-headroom; tighten it as the solver improves.
+
 #[test]
 fn c101_within_gap() {
-    assert_instance("c101", 828.94, 0.5)
+    assert_instance("c101", 828.94, 0.05)
 }
 
 #[test]
 fn r101_within_gap() {
-    assert_instance("r101", 1650.80, 0.5)
+    assert_instance("r101", 1650.80, 0.05)
 }
 
 #[test]
 fn rc101_within_gap() {
-    assert_instance("rc101", 1696.95, 0.5)
+    assert_instance("rc101", 1696.95, 0.05)
 }
