@@ -65,3 +65,47 @@ impl TryFrom<TimeWindowRaw> for TimeWindow {
         Self::new(value.start, value.end)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn time(v: f64) -> Time {
+        Time::new(v).unwrap()
+    }
+
+    fn dur(v: f64) -> Duration {
+        Duration::new(v).unwrap()
+    }
+
+    #[test]
+    fn add_duration_advances_time() {
+        assert_eq!((time(10.0) + dur(5.0)).get(), 15.0);
+    }
+
+    #[test]
+    fn sub_time_saturates_at_zero() {
+        assert_eq!((time(10.0) - time(4.0)).get(), 6.0);
+        assert_eq!((time(4.0) - time(10.0)).get(), 0.0);
+    }
+
+    #[test]
+    fn window_rejects_end_before_start() {
+        assert!(TimeWindow::new(time(10.0), time(5.0)).is_err());
+    }
+
+    #[test]
+    fn window_allows_zero_width() {
+        assert!(TimeWindow::new(time(5.0), time(5.0)).is_ok());
+    }
+
+    #[test]
+    fn contains_is_inclusive() {
+        let window = TimeWindow::new(time(5.0), time(10.0)).unwrap();
+        assert!(window.contains(time(5.0)));
+        assert!(window.contains(time(10.0)));
+        assert!(window.contains(time(7.0)));
+        assert!(!window.contains(time(4.9)));
+        assert!(!window.contains(time(10.1)));
+    }
+}

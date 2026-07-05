@@ -96,4 +96,25 @@ mod tests {
         assert!(serde_json::from_str::<Tank>(r#"{"capacity":100.0,"level":200.0}"#).is_err());
         assert!(serde_json::from_str::<Tank>(r#"{"capacity":100.0,"level":50.0}"#).is_ok());
     }
+
+    #[test]
+    fn remaining_is_capacity_minus_level() {
+        let tank = Tank::new(Liters::new(100.0).unwrap(), Liters::new(30.0).unwrap()).unwrap();
+        assert_eq!(tank.remaining().get(), 70.0);
+    }
+
+    #[test]
+    fn full_tank_is_at_capacity_with_no_remaining() {
+        let tank = Tank::full(Liters::new(100.0).unwrap());
+        assert_eq!(tank.level().get(), 100.0);
+        assert_eq!(tank.remaining().get(), 0.0);
+    }
+
+    #[test]
+    fn can_serve_checks_against_level() {
+        let tank = Tank::new(Liters::new(100.0).unwrap(), Liters::new(40.0).unwrap()).unwrap();
+        assert!(tank.can_serve(Liters::new(40.0).unwrap()));
+        assert!(tank.can_serve(Liters::new(10.0).unwrap()));
+        assert!(!tank.can_serve(Liters::new(41.0).unwrap()));
+    }
 }

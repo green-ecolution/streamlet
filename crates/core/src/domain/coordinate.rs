@@ -52,4 +52,18 @@ mod tests {
         assert!(serde_json::from_str::<Coordinate>(r#"{"lat":91.0,"lon":0.0}"#).is_err());
         assert!(serde_json::from_str::<Coordinate>(r#"{"lat":54.78,"lon":9.44}"#).is_ok());
     }
+
+    #[test]
+    fn new_rejects_out_of_range() {
+        assert!(Coordinate::new(91.0, 0.0).is_err());
+        assert!(Coordinate::new(-91.0, 0.0).is_err());
+        assert!(Coordinate::new(0.0, 181.0).is_err());
+        assert!(Coordinate::new(0.0, -181.0).is_err());
+    }
+
+    #[test]
+    fn new_accepts_boundaries() {
+        assert!(Coordinate::new(90.0, 180.0).is_ok());
+        assert!(Coordinate::new(-90.0, -180.0).is_ok());
+    }
 }

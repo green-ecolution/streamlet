@@ -156,4 +156,13 @@ mod tests {
         assert!(serde_json::from_str::<Liters>("-1.0").is_err());
         assert!(serde_json::from_str::<Liters>("3.5").is_ok());
     }
+
+    #[test]
+    fn non_negative_unit_rejects_negative_and_non_finite() {
+        assert!(Liters::new(-0.1).is_err());
+        assert!(Liters::new(f64::INFINITY).is_err());
+        assert!(Liters::new(f64::NAN).is_err());
+        assert!(Liters::new(0.0).is_ok());
+        assert!(Liters::new(2.5).is_ok());
+    }
 }

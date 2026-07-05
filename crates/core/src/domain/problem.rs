@@ -80,3 +80,45 @@ impl TryFrom<ProblemRaw> for Problem {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Coordinate, Liters, Meters, Tank, Time, TimeWindow, VehicleKind};
+
+    fn depot() -> Depot {
+        Depot {
+            id: DepotId::new(1),
+            location: Coordinate::new(54.0, 9.0).unwrap(),
+        }
+    }
+
+    fn vehicle() -> Vehicle {
+        Vehicle {
+            id: VehicleId::new(1),
+            start: Coordinate::new(54.0, 9.0).unwrap(),
+            tank: Tank::full(Liters::new(100.0).unwrap()),
+            kind: VehicleKind::Car {
+                width: Meters::new(2.0).unwrap(),
+                height: Meters::new(2.0).unwrap(),
+            },
+            shift: TimeWindow::new(Time::new(0.0).unwrap(), Time::new(100.0).unwrap()).unwrap(),
+            max_trips: None,
+        }
+    }
+
+    #[test]
+    fn requires_at_least_one_vehicle() {
+        assert!(Problem::new(vec![], vec![depot()], vec![], vec![]).is_err());
+    }
+
+    #[test]
+    fn requires_at_least_one_depot() {
+        assert!(Problem::new(vec![vehicle()], vec![], vec![], vec![]).is_err());
+    }
+
+    #[test]
+    fn accepts_minimal_problem() {
+        assert!(Problem::new(vec![vehicle()], vec![depot()], vec![], vec![]).is_ok());
+    }
+}
