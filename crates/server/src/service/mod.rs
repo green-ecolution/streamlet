@@ -7,6 +7,7 @@ use std::time::Duration as StdDuration;
 
 use streamlet_core::domain::{Coordinate, Problem, Solution, Stop};
 use streamlet_core::router::{RouteGeometry, Router, RouterError};
+use streamlet_core::solver::route::node_coordinates;
 use streamlet_core::solver::search::SearchLimits;
 use streamlet_core::solver::{SolveOptions, SolverError, solve};
 
@@ -50,19 +51,6 @@ impl SolveService {
             router,
             solver_time_limit,
         }
-    }
-
-    /// All node coordinates in matrix order — MUST match `Instance::new` (core):
-    /// vehicles, depots, customers, refill stations, in `Problem` field order.
-    fn node_coordinates(problem: &Problem) -> Vec<Coordinate> {
-        problem
-            .vehicles()
-            .iter()
-            .map(|v| v.start)
-            .chain(problem.depots().iter().map(|d| d.location))
-            .chain(problem.customers().iter().map(|c| c.location))
-            .chain(problem.refill_stations().iter().map(|r| r.location))
-            .collect()
     }
 
     fn stop_coordinate(problem: &Problem, stop: &Stop) -> Coordinate {
@@ -118,7 +106,7 @@ impl SolveService {
         // first vehicle's costing (heterogeneous fleets share the road graph;
         // keeps one matrix call per solve).
         let matrix_vehicle = problem.vehicles()[0];
-        let coords = Self::node_coordinates(&problem);
+        let coords = node_coordinates(&problem);
         let matrix = self.router.matrix(&matrix_vehicle, &coords).await?;
 
         let options = SolveOptions {

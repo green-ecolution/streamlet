@@ -1,8 +1,22 @@
 use std::ops::Range;
 
-use crate::domain::{Problem, Stop};
+use crate::domain::{Coordinate, Problem, Stop};
 use crate::matrix::{CostMatrix, NodeIndex};
 use crate::solver::segments::{DurationSegment, LoadSegment};
+
+/// All node coordinates in the exact order `Instance::new` indexes nodes:
+/// vehicles, depots, customers, refill stations, in `Problem` field order.
+/// Routers must build matrices over precisely this sequence.
+pub fn node_coordinates(problem: &Problem) -> Vec<Coordinate> {
+    problem
+        .vehicles()
+        .iter()
+        .map(|v| v.start)
+        .chain(problem.depots().iter().map(|d| d.location))
+        .chain(problem.customers().iter().map(|c| c.location))
+        .chain(problem.refill_stations().iter().map(|r| r.location))
+        .collect()
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstanceError {
@@ -515,6 +529,51 @@ pub(crate) mod tests {
         assert!(
             instance.evaluate(0, &[4, 2]).is_feasible,
             "refill first, then serve 90"
+        );
+    }
+
+    #[test]
+    fn node_coordinates_align_with_instance_indexing() {
+        // Distinct coordinates per node so any reorder is detectable.
+        let base = problem_small_tank_with_refill();
+        let coord = |i: f64| Coordinate::new(50.0 + i, 9.0 + i).unwrap();
+        let vehicle = Vehicle {
+            start: coord(0.0),
+            ..base.vehicles()[0]
+        };
+        let depot = Depot {
+            location: coord(1.0),
+            ..base.depots()[0]
+        };
+        let customers: Vec<Customer> = base
+            .customers()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| Customer {
+                location: coord(2.0 + i as f64),
+                ..*c
+            })
+            .collect();
+        let refill = RefillStation {
+            location: coord(4.0),
+            ..base.refill_stations()[0]
+        };
+        let problem = Problem::new(vec![vehicle], vec![depot], customers, vec![refill]).unwrap();
+
+        let coords = node_coordinates(&problem);
+        assert_eq!(coords.len(), 5);
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        assert_eq!(coords[0], problem.vehicles()[0].start);
+        assert_eq!(
+            coords[instance.depot_range().start],
+            problem.depots()[0].location
+        );
+        for (offset, c) in problem.customers().iter().enumerate() {
+            assert_eq!(coords[instance.customer_range().start + offset], c.location);
+        }
+        assert_eq!(
+            coords[instance.refill_range().start],
+            problem.refill_stations()[0].location
         );
     }
 
