@@ -102,15 +102,23 @@ struct MatrixCell {
 
 #[async_trait::async_trait]
 impl Router for ValhallaClient {
+    /// Does not chunk requests: assumes problem-scale inputs (at most a few
+    /// hundred locations), all sent to Valhalla in a single call.
     async fn matrix(
         &self,
         vehicle: &Vehicle,
         locations: &[Coordinate],
     ) -> Result<CostMatrix, RouterError> {
+        if locations.is_empty() {
+            // Nothing to ask the engine; CostMatrix::new(vec![], vec![]) cannot fail.
+            return CostMatrix::new(vec![], vec![])
+                .map_err(|e| RouterError::InvalidResponse(e.to_string()));
+        }
         let (costing, options) = Self::costing(vehicle);
+        let locations_json = Self::to_locations(locations);
         let body = json!({
-            "sources": Self::to_locations(locations),
-            "targets": Self::to_locations(locations),
+            "sources": locations_json.clone(),
+            "targets": locations_json,
             "costing": costing,
             "costing_options": options,
         });
@@ -120,6 +128,16 @@ impl Router for ValhallaClient {
                 RouterError::InvalidResponse("missing sources_to_targets".into())
             })?)
             .map_err(|e| RouterError::InvalidResponse(e.to_string()))?;
+
+        // The Router contract requires costs to be aligned by index with the
+        // input locations; reject anything that doesn't come back square.
+        let n = locations.len();
+        if rows.len() != n || rows.iter().any(|row| row.len() != n) {
+            return Err(RouterError::InvalidResponse(format!(
+                "matrix size mismatch: expected {n}x{n}, got {}x?",
+                rows.len()
+            )));
+        }
 
         // Unreachable pairs come back as null time/distance; reject rather
         // than silently punching holes the solver cannot handle.
@@ -210,8 +228,9 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/sources_to_targets"))
             .and(body_partial_json(serde_json::json!({
+                "sources": [{"lat": 54.78, "lon": 9.43}, {"lat": 54.79, "lon": 9.44}],
                 "costing": "truck",
-                "costing_options": {"truck": {"weight": 11.0}}
+                "costing_options": {"truck": {"weight": 11.0, "width": 2.5}}
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "sources_to_targets": [
@@ -234,9 +253,17 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/route"))
+            .and(body_partial_json(serde_json::json!({
+                "locations": [
+                    {"lat": 54.78, "lon": 9.43, "type": "break"},
+                    {"lat": 54.79, "lon": 9.44, "type": "break"}
+                ],
+                "costing": "truck"
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "trip": {"legs": [{"shape": "abc"}, {"shape": "def"}]}
             })))
+            .expect(1)
             .mount(&server)
             .await;
 
@@ -253,6 +280,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/sources_to_targets"))
             .respond_with(ResponseTemplate::new(400).set_body_string("bad costing"))
+            .expect(1)
             .mount(&server)
             .await;
         let client = ValhallaClient::new(server.uri(), std::time::Duration::from_secs(1)).unwrap();
@@ -273,6 +301,7 @@ mod tests {
                     [{"time": 130, "distance": 1.6}, {"time": 0, "distance": 0.0}]
                 ]
             })))
+            .expect(1)
             .mount(&server)
             .await;
         let client = ValhallaClient::new(server.uri(), std::time::Duration::from_secs(1)).unwrap();
@@ -280,5 +309,105 @@ mod tests {
             client.matrix(&vehicle(), &locations()).await.unwrap_err(),
             RouterError::InvalidResponse(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn wrong_matrix_dimension_maps_to_invalid_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sources_to_targets"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "sources_to_targets": [
+                    [{"time": 0, "distance": 0.0}]
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = ValhallaClient::new(server.uri(), std::time::Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            client.matrix(&vehicle(), &locations()).await.unwrap_err(),
+            RouterError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn timeout_maps_to_timeout() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/sources_to_targets"))
+            .respond_with(
+                ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(200)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client =
+            ValhallaClient::new(server.uri(), std::time::Duration::from_millis(50)).unwrap();
+        assert!(matches!(
+            client.matrix(&vehicle(), &locations()).await.unwrap_err(),
+            RouterError::Timeout
+        ));
+    }
+
+    #[tokio::test]
+    async fn unreachable_engine_maps_to_unreachable() {
+        // No server listens on this port; the connection attempt itself fails.
+        let client =
+            ValhallaClient::new("http://127.0.0.1:1", std::time::Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            client.matrix(&vehicle(), &locations()).await.unwrap_err(),
+            RouterError::Unreachable(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn route_error_paths_map_to_invalid_response() {
+        let missing_legs = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/route"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .expect(1)
+            .mount(&missing_legs)
+            .await;
+        let client =
+            ValhallaClient::new(missing_legs.uri(), std::time::Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            client
+                .directions(&vehicle(), &locations())
+                .await
+                .unwrap_err(),
+            RouterError::InvalidResponse(_)
+        ));
+
+        let leg_without_shape = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/route"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "trip": {"legs": [{}]}
+            })))
+            .expect(1)
+            .mount(&leg_without_shape)
+            .await;
+        let client =
+            ValhallaClient::new(leg_without_shape.uri(), std::time::Duration::from_secs(1))
+                .unwrap();
+        assert!(matches!(
+            client
+                .directions(&vehicle(), &locations())
+                .await
+                .unwrap_err(),
+            RouterError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_locations_yield_empty_matrix_without_http() {
+        // No mocks mounted: any HTTP request would 404 and be rejected by
+        // wiremock, so a passing result proves no call was made.
+        let server = MockServer::start().await;
+        let client = ValhallaClient::new(server.uri(), std::time::Duration::from_secs(1)).unwrap();
+        let matrix = client.matrix(&vehicle(), &[]).await.unwrap();
+        assert_eq!(matrix.len(), 0);
     }
 }
