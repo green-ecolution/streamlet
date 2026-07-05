@@ -143,9 +143,9 @@ impl<'a> Instance<'a> {
     }
 
     /// Maps a solver node id back to a domain `Stop`.
-    pub fn stop(&self, vehicle: usize, id: usize) -> Stop {
+    pub fn stop(&self, id: usize) -> Stop {
         if id < self.depots.start {
-            Stop::VehicleStart(self.problem.vehicles()[vehicle].id)
+            Stop::VehicleStart(self.problem.vehicles()[id].id)
         } else if self.depots.contains(&id) {
             Stop::Depot(self.problem.depots()[id - self.depots.start].id)
         } else if self.customers.contains(&id) {
@@ -155,6 +155,23 @@ impl<'a> Instance<'a> {
         }
     }
 
+    /// Evaluates one vehicle's visit sequence.
+    ///
+    /// `visits` holds customer and refill node ids only: the vehicle start and
+    /// the final return to the main depot are implicit and appended
+    /// automatically. Any *other* depot id that appears in `visits` is treated
+    /// as a plain zero-demand, zero-service node, not a trip boundary — only
+    /// refill stations trigger a reload/finalize. Consequently a refill
+    /// visited before the first customer still counts as a completed trip
+    /// (`trips = 1 + number of refill visits`), even though nothing was
+    /// delivered yet, by design.
+    ///
+    /// `RouteEval.load.delivery` includes the initial virtual demand
+    /// `capacity - level` used to model a partially-filled tank; it is not the
+    /// literal number of liters handed to customers.
+    ///
+    /// Panics if `vehicle` is out of range for the problem's vehicles, or if
+    /// any id in `visits` is out of range for the solver's node table.
     pub fn evaluate(&self, vehicle: usize, visits: &[usize]) -> RouteEval {
         let v = &self.problem.vehicles()[vehicle];
         let capacity = v.tank.capacity().get();
@@ -168,15 +185,20 @@ impl<'a> Instance<'a> {
         let (mut travel_time, mut distance, mut trips) = (0.0, 0.0, 1u32);
         let mut prev = self.vehicle_start(vehicle);
 
+        // The final leg always returns to the main depot, but that return must
+        // still respect the vehicle's shift window: an infinite `tw_late` here
+        // would let the vehicle arrive back arbitrarily late without penalty.
+        let return_node = SolverNode {
+            demand: 0.0,
+            service_time: 0.0,
+            tw_early: v.shift.start().get(),
+            tw_late: v.shift.end().get(),
+            is_refill: false,
+        };
+
         for &id in visits.iter().chain(std::iter::once(&main_depot)) {
             let node = if id == main_depot {
-                SolverNode {
-                    demand: 0.0,
-                    service_time: 0.0,
-                    tw_early: 0.0,
-                    tw_late: f64::INFINITY,
-                    is_refill: false,
-                }
+                return_node
             } else {
                 self.node(id)
             };
@@ -280,6 +302,23 @@ pub(crate) mod tests {
         .unwrap()
     }
 
+    pub(crate) fn problem_small_tank_with_refill() -> Problem {
+        // Node ids: 0 vehicle, 1 depot, 2..4 customers, 4 refill. Tank 50, demands 40+40.
+        let base = problem_two_customers_small_tank();
+        let refill = RefillStation {
+            id: RefillStationId::new(1),
+            location: Coordinate::new(54.0, 9.0).unwrap(),
+            refill_duration: Duration::new(120.0).unwrap(),
+        };
+        Problem::new(
+            base.vehicles().to_vec(),
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            vec![refill],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn instance_indexes_nodes_in_field_order() {
         let problem = problem_two_customers();
@@ -317,5 +356,161 @@ pub(crate) mod tests {
         let small = problem_two_customers_small_tank(); // 40 + 40 exceeds 50
         let instance = Instance::new(&small, &uniform_matrix(4)).unwrap();
         assert!(!instance.evaluate(0, &[2, 3]).is_feasible);
+    }
+
+    fn with_shift(problem: Problem, start: f64, end: f64) -> Problem {
+        let vehicle = Vehicle {
+            shift: TimeWindow::new(Time::new(start).unwrap(), Time::new(end).unwrap()).unwrap(),
+            ..problem.vehicles()[0]
+        };
+        Problem::new(
+            vec![vehicle],
+            problem.depots().to_vec(),
+            problem.customers().to_vec(),
+            problem.refill_stations().to_vec(),
+        )
+        .unwrap()
+    }
+
+    fn with_customer_window(problem: Problem, idx: usize, start: f64, end: f64) -> Problem {
+        let mut customers = problem.customers().to_vec();
+        customers[idx] = Customer {
+            time_window: Some(
+                TimeWindow::new(Time::new(start).unwrap(), Time::new(end).unwrap()).unwrap(),
+            ),
+            ..customers[idx]
+        };
+        Problem::new(
+            problem.vehicles().to_vec(),
+            problem.depots().to_vec(),
+            customers,
+            problem.refill_stations().to_vec(),
+        )
+        .unwrap()
+    }
+
+    fn ten_second_matrix(n: usize) -> CostMatrix {
+        let cell = |i: usize, j: usize| if i == j { 0.0 } else { 10.0 };
+        let time: Vec<Vec<f64>> = (0..n)
+            .map(|i| (0..n).map(|j| cell(i, j)).collect())
+            .collect();
+        CostMatrix::new(time.clone(), time).unwrap()
+    }
+
+    #[test]
+    fn route_must_return_before_shift_end() {
+        // Shift [0,200]; customer window opens at 150 -> serve until 210,
+        // return at 220 > shift end 200. The route duration (80) stays below
+        // the shift length, so only the return-deadline check can catch this.
+        let problem = with_customer_window(
+            with_shift(problem_two_customers(), 0.0, 200.0),
+            0,
+            150.0,
+            160.0,
+        );
+        let instance = Instance::new(&problem, &ten_second_matrix(4)).unwrap();
+        let eval = instance.evaluate(0, &[2]);
+        assert!(!eval.is_feasible, "late return must be infeasible");
+    }
+
+    #[test]
+    fn return_within_shift_is_feasible() {
+        // Shift [0,200]; customer window [80,90], 10s legs, 60s service:
+        // arrive 80, depart 140, return 150 <= 200.
+        let problem = with_customer_window(
+            with_shift(problem_two_customers(), 0.0, 200.0),
+            0,
+            80.0,
+            90.0,
+        );
+        let instance = Instance::new(&problem, &ten_second_matrix(4)).unwrap();
+        // Serve only customer 2 (node id 2); customer 3 keeps no window.
+        assert!(instance.evaluate(0, &[2]).is_feasible);
+    }
+
+    #[test]
+    fn empty_visits_is_feasible_start_to_depot() {
+        let problem = problem_two_customers();
+        let instance = Instance::new(&problem, &uniform_matrix(4)).unwrap();
+        let eval = instance.evaluate(0, &[]);
+        assert!(eval.is_feasible);
+        assert_eq!(eval.travel_time, 100.0);
+        assert_eq!(eval.trips, 1);
+    }
+
+    #[test]
+    fn refill_restores_capacity_mid_route() {
+        let problem = problem_small_tank_with_refill();
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        assert!(
+            !instance.evaluate(0, &[2, 3]).is_feasible,
+            "40+40 > 50 without refill"
+        );
+        let eval = instance.evaluate(0, &[2, 4, 3]);
+        assert!(
+            eval.is_feasible,
+            "refill between customers must restore capacity"
+        );
+        assert_eq!(eval.trips, 2);
+    }
+
+    #[test]
+    fn max_trips_limits_refills() {
+        let base = problem_small_tank_with_refill();
+        let vehicle = Vehicle {
+            max_trips: Some(std::num::NonZeroU32::new(1).unwrap()),
+            ..base.vehicles()[0]
+        };
+        let problem = Problem::new(
+            vec![vehicle],
+            base.depots().to_vec(),
+            base.customers().to_vec(),
+            base.refill_stations().to_vec(),
+        )
+        .unwrap();
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        assert!(
+            !instance.evaluate(0, &[2, 4, 3]).is_feasible,
+            "2 trips exceed max_trips 1"
+        );
+    }
+
+    #[test]
+    fn partially_filled_tank_limits_first_trip_only() {
+        // Tank 100 but level 10: a 90-demand customer needs a refill first.
+        let base = problem_small_tank_with_refill();
+        let vehicle = Vehicle {
+            tank: Tank::new(Liters::new(100.0).unwrap(), Liters::new(10.0).unwrap()).unwrap(),
+            ..base.vehicles()[0]
+        };
+        let mut customers = base.customers().to_vec();
+        customers[0] = Customer {
+            demand: Liters::new(90.0).unwrap(),
+            ..customers[0]
+        };
+        let problem = Problem::new(
+            vec![vehicle],
+            base.depots().to_vec(),
+            customers,
+            base.refill_stations().to_vec(),
+        )
+        .unwrap();
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        assert!(!instance.evaluate(0, &[2]).is_feasible, "90 > level 10");
+        assert!(
+            instance.evaluate(0, &[4, 2]).is_feasible,
+            "refill first, then serve 90"
+        );
+    }
+
+    #[test]
+    fn stop_maps_ids_back_to_domain() {
+        let problem = problem_small_tank_with_refill();
+        let instance = Instance::new(&problem, &uniform_matrix(5)).unwrap();
+        assert!(matches!(instance.stop(0), Stop::VehicleStart(id) if id.get() == 1));
+        assert!(matches!(instance.stop(1), Stop::Depot(id) if id.get() == 1));
+        assert!(matches!(instance.stop(2), Stop::Customer(id) if id.get() == 1));
+        assert!(matches!(instance.stop(3), Stop::Customer(id) if id.get() == 2));
+        assert!(matches!(instance.stop(4), Stop::Refill(id) if id.get() == 1));
     }
 }
