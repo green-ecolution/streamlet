@@ -1,0 +1,99 @@
+name: Generate Valhalla tiles
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  generate-pbf:
+    name: Generate patched PBF
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - name: Login to Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Create output directory
+        run: mkdir -p /tmp/output
+
+      - name: Run pbf-patch container
+        run: |
+          docker run --rm \
+            -u root \
+            -v /tmp/output:/files/output \
+            -e OUTPUT_FILENAME="schleswig-holstein-updated.osm.pbf" \
+            ghcr.io/green-ecolution/streamlet/pbf-patch:latest
+
+      - name: Verify PBF file was created
+        run: |
+          ls -lh /tmp/output/
+          if [ ! -f /tmp/output/schleswig-holstein-updated.osm.pbf ]; then
+            echo "Error: PBF file was not created"
+            exit 1
+          fi
+
+      - name: Upload PBF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modified-pbf
+          path: /tmp/output/schleswig-holstein-updated.osm.pbf
+          retention-days: 1
+
+  generate-valhalla:
+    name: Generate Valhalla tiles
+    runs-on: ubuntu-latest
+    needs: generate-pbf
+    permissions:
+      packages: read
+    steps:
+      - name: Login to Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Create data directory
+        run: mkdir -p /tmp/data
+
+      - name: Download PBF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: modified-pbf
+          path: /tmp/data
+
+      - name: Generate Valhalla tiles
+        run: |
+          docker run --rm \
+            -u root \
+            -v /tmp/data:/tmp/data \
+            -e PBF_PATH="/tmp/data/schleswig-holstein-updated.osm.pbf" \
+            -e S3_HOST="${{ secrets.S3_HOST }}" \
+            -e S3_PORT="${{ secrets.S3_PORT }}" \
+            -e S3_SCHEME="${{ secrets.S3_SCHEME }}" \
+            -e S3_ACCESS_KEY="${{ secrets.S3_ACCESS_KEY }}" \
+            -e S3_SECRET_KEY="${{ secrets.S3_SECRET_KEY }}" \
+            -e S3_BUCKET="${{ secrets.S3_BUCKET }}" \
+            -e TILE_ARCHIVE_PREFIX="valhalla-tiles" \
+            ghcr.io/green-ecolution/streamlet/generate-valhalla:latest
+
+  cleanup:
+    name: Clean up old archives
+    runs-on: ubuntu-latest
+    needs: generate-valhalla
+    permissions:
+      packages: read
+    steps:
+      - name: Login to Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Run cleanup container
+        run: |
+          docker run --rm \
+            -e S3_HOST="${{ secrets.S3_HOST }}" \
+            -e S3_PORT="${{ secrets.S3_PORT }}" \
+            -e S3_SCHEME="${{ secrets.S3_SCHEME }}" \
+            -e S3_ACCESS_KEY="${{ secrets.S3_ACCESS_KEY }}" \
+            -e S3_SECRET_KEY="${{ secrets.S3_SECRET_KEY }}" \
+            -e S3_BUCKET="${{ secrets.S3_BUCKET }}" \
+            -e TILE_ARCHIVE_PREFIXES="valhalla-tiles" \
+            -e ARCHIVE_RETENTION="3" \
+            ghcr.io/green-ecolution/streamlet/cleanup-tiles:latest
