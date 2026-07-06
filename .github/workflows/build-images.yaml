@@ -10,7 +10,12 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - ".docker/**"
+      - ".dockerignore"
       - ".github/workflows/build-images.yaml"
+
+concurrency:
+  group: build-images
+  cancel-in-progress: true
 
 jobs:
   build:
