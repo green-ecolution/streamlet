@@ -1,0 +1,27 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="handmade">
+  <node id="1" version="1" lat="54.7950" lon="9.4300"/>
+  <node id="2" version="1" lat="54.7950" lon="9.4310"/>
+  <node id="3" version="1" lat="54.7950" lon="9.4320"/>
+  <node id="4" version="1" lat="54.7960" lon="9.4320"/>
+  <node id="5" version="1" lat="54.8100" lon="9.4700"/>
+  <node id="6" version="1" lat="54.8100" lon="9.4710"/>
+  <way id="100" version="2">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Teststraße"/>
+  </way>
+  <way id="200" version="1">
+    <nd ref="3"/>
+    <nd ref="4"/>
+    <tag k="highway" v="residential"/>
+    <tag k="oneway" v="yes"/>
+  </way>
+  <way id="300" version="1">
+    <nd ref="5"/>
+    <nd ref="6"/>
+    <tag k="highway" v="footway"/>
+  </way>
+</osm>
