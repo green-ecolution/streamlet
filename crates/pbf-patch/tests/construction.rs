@@ -6,8 +6,7 @@ use std::path::Path;
 
 #[test]
 fn patches_fixture_network() {
-    let (nodes, ways) =
-        load_car_network(Path::new("tests/fixtures/flensburg.osm.pbf")).unwrap();
+    let (nodes, ways) = load_car_network(Path::new("tests/fixtures/flensburg.osm.pbf")).unwrap();
 
     let sites = vec![ConstructionSite {
         id: 1,
@@ -17,7 +16,10 @@ fn patches_fixture_network() {
     }];
 
     let changed = changed_ways(&sites, &ways, &nodes);
-    assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200]);
+    assert_eq!(
+        changed.iter().map(|w| w.id).collect::<Vec<_>>(),
+        vec![100, 200]
+    );
 
     let osc = write_osc(&changed);
     assert!(osc.contains(r#"<way id="100" version="3""#));

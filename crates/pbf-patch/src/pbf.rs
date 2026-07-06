@@ -11,10 +11,22 @@ pub fn load_car_network(path: &Path) -> Result<(HashMap<NodeId, Coordinate>, Vec
 
     reader.for_each(|element| match element {
         Element::Node(n) => {
-            nodes.insert(n.id(), Coordinate { lat: n.lat(), lon: n.lon() });
+            nodes.insert(
+                n.id(),
+                Coordinate {
+                    lat: n.lat(),
+                    lon: n.lon(),
+                },
+            );
         }
         Element::DenseNode(n) => {
-            nodes.insert(n.id(), Coordinate { lat: n.lat(), lon: n.lon() });
+            nodes.insert(
+                n.id(),
+                Coordinate {
+                    lat: n.lat(),
+                    lon: n.lon(),
+                },
+            );
         }
         Element::Way(w) => {
             let highway = w.tags().find(|(k, _)| *k == "highway").map(|(_, v)| v);

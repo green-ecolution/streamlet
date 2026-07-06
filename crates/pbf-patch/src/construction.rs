@@ -13,7 +13,10 @@ pub fn changed_ways(
         .iter()
         .filter_map(|site| {
             index
-                .match_point(Coordinate { lat: site.lat, lon: site.lon })
+                .match_point(Coordinate {
+                    lat: site.lat,
+                    lon: site.lon,
+                })
                 .map(|(way_id, _)| way_id)
         })
         .collect();
@@ -37,7 +40,11 @@ pub fn changed_ways(
 
     for way_id in &matched {
         for node in &way_by_id[way_id].node_refs {
-            for neighbor_id in node_to_ways.get(node).map(Vec::as_slice).unwrap_or_default() {
+            for neighbor_id in node_to_ways
+                .get(node)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
                 if matched.contains(neighbor_id) || changed.contains_key(neighbor_id) {
                     continue;
                 }
@@ -83,13 +90,55 @@ mod tests {
 
     fn nodes() -> HashMap<NodeId, Coordinate> {
         [
-            (1, Coordinate { lat: 54.7950, lon: 9.4300 }),
-            (2, Coordinate { lat: 54.7950, lon: 9.4310 }),
-            (3, Coordinate { lat: 54.7950, lon: 9.4320 }),
-            (4, Coordinate { lat: 54.7960, lon: 9.4320 }),
-            (5, Coordinate { lat: 54.7960, lon: 9.4300 }),
-            (6, Coordinate { lat: 54.8100, lon: 9.4700 }),
-            (7, Coordinate { lat: 54.8100, lon: 9.4710 }),
+            (
+                1,
+                Coordinate {
+                    lat: 54.7950,
+                    lon: 9.4300,
+                },
+            ),
+            (
+                2,
+                Coordinate {
+                    lat: 54.7950,
+                    lon: 9.4310,
+                },
+            ),
+            (
+                3,
+                Coordinate {
+                    lat: 54.7950,
+                    lon: 9.4320,
+                },
+            ),
+            (
+                4,
+                Coordinate {
+                    lat: 54.7960,
+                    lon: 9.4320,
+                },
+            ),
+            (
+                5,
+                Coordinate {
+                    lat: 54.7960,
+                    lon: 9.4300,
+                },
+            ),
+            (
+                6,
+                Coordinate {
+                    lat: 54.8100,
+                    lon: 9.4700,
+                },
+            ),
+            (
+                7,
+                Coordinate {
+                    lat: 54.8100,
+                    lon: 9.4710,
+                },
+            ),
         ]
         .into()
     }
@@ -97,14 +146,33 @@ mod tests {
     #[test]
     fn blocks_matched_way_and_opens_adjacent_oneway() {
         let ways = vec![
-            way(100, &[1, 2, 3], &[("highway", "residential"), ("name", "Teststraße")]),
-            way(200, &[3, 4], &[("highway", "residential"), ("oneway", "yes")]),
-            way(400, &[1, 5], &[("highway", "residential"), ("oneway", "no")]),
-            way(300, &[6, 7], &[("highway", "residential"), ("oneway", "yes")]),
+            way(
+                100,
+                &[1, 2, 3],
+                &[("highway", "residential"), ("name", "Teststraße")],
+            ),
+            way(
+                200,
+                &[3, 4],
+                &[("highway", "residential"), ("oneway", "yes")],
+            ),
+            way(
+                400,
+                &[1, 5],
+                &[("highway", "residential"), ("oneway", "no")],
+            ),
+            way(
+                300,
+                &[6, 7],
+                &[("highway", "residential"), ("oneway", "yes")],
+            ),
         ];
         let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &nodes());
 
-        assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200]);
+        assert_eq!(
+            changed.iter().map(|w| w.id).collect::<Vec<_>>(),
+            vec![100, 200]
+        );
 
         let blocked = &changed[0];
         assert_eq!(blocked.tag("access"), Some("no"));
@@ -131,14 +199,31 @@ mod tests {
     #[test]
     fn does_not_recurse_beyond_direct_neighbors() {
         let mut n = nodes();
-        n.insert(8, Coordinate { lat: 54.7970, lon: 9.4320 });
+        n.insert(
+            8,
+            Coordinate {
+                lat: 54.7970,
+                lon: 9.4320,
+            },
+        );
         let ways = vec![
             way(100, &[1, 2, 3], &[("highway", "residential")]),
-            way(200, &[3, 4], &[("highway", "residential"), ("oneway", "yes")]),
-            way(500, &[4, 8], &[("highway", "residential"), ("oneway", "yes")]),
+            way(
+                200,
+                &[3, 4],
+                &[("highway", "residential"), ("oneway", "yes")],
+            ),
+            way(
+                500,
+                &[4, 8],
+                &[("highway", "residential"), ("oneway", "yes")],
+            ),
         ];
         let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &n);
-        assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200]);
+        assert_eq!(
+            changed.iter().map(|w| w.id).collect::<Vec<_>>(),
+            vec![100, 200]
+        );
     }
 
     #[test]
@@ -146,10 +231,17 @@ mod tests {
         let ways = vec![
             way(100, &[1, 2, 3], &[("highway", "residential")]),
             way(200, &[3, 4], &[("highway", "residential"), ("oneway", "1")]),
-            way(400, &[1, 5], &[("highway", "residential"), ("oneway", "-1")]),
+            way(
+                400,
+                &[1, 5],
+                &[("highway", "residential"), ("oneway", "-1")],
+            ),
         ];
         let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &nodes());
-        assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200, 400]);
+        assert_eq!(
+            changed.iter().map(|w| w.id).collect::<Vec<_>>(),
+            vec![100, 200, 400]
+        );
         assert_eq!(changed[1].tag("oneway"), None);
         assert_eq!(changed[2].tag("oneway"), None);
     }
