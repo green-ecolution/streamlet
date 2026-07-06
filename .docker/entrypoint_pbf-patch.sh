@@ -72,6 +72,8 @@ apply_changesets() {
 }
 
 main() {
+	[[ "$BOUNDED_FILENAME" != "$FILENAME" ]] || fatal "BOUNDED_FILENAME must differ from FILENAME (set BOUNDED_FILENAME when overriding PBF_URL)"
+
 	if [[ -n $DEBUG ]]; then
 		print_config
 	fi
