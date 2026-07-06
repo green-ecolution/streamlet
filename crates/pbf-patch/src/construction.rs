@@ -127,4 +127,43 @@ mod tests {
         let ways = vec![way(100, &[1, 2, 3], &[("highway", "residential")])];
         assert!(changed_ways(&[site(54.99, 9.99)], &ways, &nodes()).is_empty());
     }
+
+    #[test]
+    fn does_not_recurse_beyond_direct_neighbors() {
+        let mut n = nodes();
+        n.insert(8, Coordinate { lat: 54.7970, lon: 9.4320 });
+        let ways = vec![
+            way(100, &[1, 2, 3], &[("highway", "residential")]),
+            way(200, &[3, 4], &[("highway", "residential"), ("oneway", "yes")]),
+            way(500, &[4, 8], &[("highway", "residential"), ("oneway", "yes")]),
+        ];
+        let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &n);
+        assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200]);
+    }
+
+    #[test]
+    fn opens_numeric_oneway_variants() {
+        let ways = vec![
+            way(100, &[1, 2, 3], &[("highway", "residential")]),
+            way(200, &[3, 4], &[("highway", "residential"), ("oneway", "1")]),
+            way(400, &[1, 5], &[("highway", "residential"), ("oneway", "-1")]),
+        ];
+        let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &nodes());
+        assert_eq!(changed.iter().map(|w| w.id).collect::<Vec<_>>(), vec![100, 200, 400]);
+        assert_eq!(changed[1].tag("oneway"), None);
+        assert_eq!(changed[2].tag("oneway"), None);
+    }
+
+    #[test]
+    fn matched_way_keeps_its_own_oneway() {
+        let ways = vec![way(
+            100,
+            &[1, 2, 3],
+            &[("highway", "residential"), ("oneway", "yes")],
+        )];
+        let changed = changed_ways(&[site(54.79505, 9.4305)], &ways, &nodes());
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].tag("access"), Some("no"));
+        assert_eq!(changed[0].tag("oneway"), Some("yes"));
+    }
 }
