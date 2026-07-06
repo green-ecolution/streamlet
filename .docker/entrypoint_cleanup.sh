@@ -12,14 +12,14 @@ cleanup_prefix() {
 
 	echo "🗑️  Starting cleanup of $prefix from S3..."
 
-	readarray -t archives < <(mc ls "remote/$S3_BUCKET/$prefix" --json | tac | tail -n "+$((ARCHIVE_RETENTION+1))")
+	readarray -t archives < <(list_archives "$prefix" | tac | tail -n "+$((ARCHIVE_RETENTION+1))")
 
 	echo "📊 ${#archives[@]} archives found for cleanup"
 
 	for archive in "${archives[@]}"; do
-		archive=$(echo "$archive" | yq -p=json '.key')
+		[[ -z $archive ]] && continue
 		echo "🗑️  Removing $archive from S3..."
-		mc rm "remote/$S3_BUCKET/$archive" || echo "⚠️  Failed to remove $archive"
+		aws_s3 s3 rm "s3://$S3_BUCKET/$archive" || echo "⚠️  Failed to remove $archive"
 	done
 
 	echo "✅ Cleanup of $prefix complete"
@@ -44,12 +44,8 @@ main() {
 		echo ""
 	fi
 
-	echo "⏳ Waiting for MinIO..."
-	wait_for_minio
-	echo ""
-
-	echo "🔐 Logging into MinIO..."
-	login_minio
+	echo "⏳ Waiting for S3..."
+	wait_for_s3
 	echo ""
 
 	echo "📦 Processing ${#prefixes[@]} prefix(es)..."

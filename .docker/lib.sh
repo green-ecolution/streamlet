@@ -13,6 +13,8 @@ S3_SCHEME="${S3_SCHEME:-http}"
 S3_ACCESS_KEY="${S3_ACCESS_KEY:-root}"
 S3_SECRET_KEY="${S3_SECRET_KEY:-password}"
 S3_BUCKET="${S3_BUCKET:-valhalla-data}"
+S3_REGION="${S3_REGION:-de}"
+S3_ENDPOINT="$S3_SCHEME://$S3_HOST:$S3_PORT"
 
 TILE_ARCHIVE_SET=true
 
@@ -47,9 +49,9 @@ print_config() {
 	echo "S3_HOST: $S3_HOST"
 	echo "S3_PORT: $S3_PORT"
 	echo "S3_SCHEME: $S3_SCHEME"
-	echo "S3_ACCESS_KEY: $S3_ACCESS_KEY"
-	echo "S3_SECRET_KEY: $S3_SECRET_KEY"
 	echo "S3_BUCKET: $S3_BUCKET"
+	echo "S3_REGION: $S3_REGION"
+	echo "S3_ENDPOINT: $S3_ENDPOINT"
 
 	echo "DATE: $DATE"
 
@@ -57,6 +59,13 @@ print_config() {
 	echo "TILE_ARCHIVE: $TILE_ARCHIVE"
 	echo "TILE_ARCHIVE_SET: $TILE_ARCHIVE_SET"
 	echo "LOCAL_ARCHIVE_NAME: $LOCAL_ARCHIVE_NAME"
+}
+
+aws_s3() {
+	AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" \
+	AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+	AWS_DEFAULT_REGION="$S3_REGION" \
+		aws --endpoint-url "$S3_ENDPOINT" "$@"
 }
 
 setup_data_dir() {
@@ -116,10 +125,10 @@ extract_tiles() {
 	echo "✅ Files are now extracted"
 }
 
-wait_for_minio() {
+wait_for_s3() {
 	echo "🔍 Checking if S3 storage is online..."
 	i=0
-	until curl -Is --connect-timeout 1 --max-time 2 "$S3_SCHEME://$S3_HOST:$S3_PORT/minio/health/live" >/dev/null; do
+	until curl -Is --connect-timeout 1 --max-time 2 "$S3_ENDPOINT" >/dev/null; do
 		((i++))
 		if (( i > 10 )); then
 			fatal "s3 is not available! Exiting..."
@@ -130,32 +139,31 @@ wait_for_minio() {
 	echo "✅ S3 storage is online"
 }
 
-login_minio() {
-	echo "🔐 Logging into S3 storage..."
-	mc alias set remote "$S3_SCHEME://$S3_HOST:$S3_PORT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" || fatal "s3 login"
-	echo "✅ S3 login successful"
-}
-
 upload_archive() {
 	echo "📤 Starting to upload archive to S3..."
 	echo "📦 Archive: $TILE_ARCHIVE"
-	login_minio
-	mc cp "$TILE_ARCHIVE" "remote/$S3_BUCKET" || fatal "s3 upload"
+	aws_s3 s3 cp --no-progress "$TILE_ARCHIVE" "s3://$S3_BUCKET/$TILE_ARCHIVE" || fatal "s3 upload"
 	echo "✅ Finished uploading archive to S3"
+}
+
+list_archives() {
+	local prefix=$1
+	aws_s3 s3api list-objects-v2 --bucket "$S3_BUCKET" --prefix "$prefix" \
+		--query 'Contents[].Key' --output text | tr '\t' '\n' | grep -v '^None$' | sort
 }
 
 select_archive() {
 	echo "🔍 Selecting archive from S3..."
-	if ! mc stat "remote/$S3_BUCKET/$TILE_ARCHIVE" >/dev/null; then
+	if ! aws_s3 s3api head-object --bucket "$S3_BUCKET" --key "$TILE_ARCHIVE" >/dev/null 2>&1; then
 		if "$TILE_ARCHIVE_SET"; then
 			echo "❌ Archive not found on S3" >&2
 			return 1
 		fi
 
 		echo "🔄 Today's archive not found, trying to get latest archive..." >&2
-		TILE_ARCHIVE=$(mc ls "remote/$S3_BUCKET/$TILE_ARCHIVE_PREFIX" --json | tac | head -n 1 | yq -p=json '.key')
+		TILE_ARCHIVE=$(list_archives "$TILE_ARCHIVE_PREFIX" | tail -n 1)
 
-		if [[ $TILE_ARCHIVE == "null" ]]; then
+		if [[ -z $TILE_ARCHIVE ]]; then
 			echo "❌ No archive found on S3!" >&2
 			return 1
 		fi
@@ -167,7 +175,7 @@ select_archive() {
 
 download_archive() {
 	echo "📥 Starting to download $TILE_ARCHIVE from S3..."
-	mc cp "remote/$S3_BUCKET/$TILE_ARCHIVE" . || fatal "download archive"
+	aws_s3 s3 cp --no-progress "s3://$S3_BUCKET/$TILE_ARCHIVE" . || fatal "download archive"
 	echo "✅ Finished downloading archive from S3"
 }
 

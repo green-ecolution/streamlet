@@ -1,15 +1,15 @@
 ################################
-# Tools
-################################
-FROM minio/mc:RELEASE.2025-07-21T05-28-08Z AS tools-mc
-
-
-################################
 # Runner
 ################################
 FROM ghcr.io/valhalla/valhalla-scripted:3.6.0 AS runner
 
-COPY --from=tools-mc /usr/bin/mc /usr/bin/mc
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl ca-certificates unzip \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip \
+  && unzip -q /tmp/awscliv2.zip -d /tmp \
+  && /tmp/aws/install \
+  && rm -rf /tmp/aws /tmp/awscliv2.zip
 
 RUN useradd -ms /usr/bin/bash -u 1001 valhalla && chmod 777 /custom_files
 USER valhalla

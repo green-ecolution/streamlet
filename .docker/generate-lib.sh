@@ -49,8 +49,8 @@ main() {
 	echo ""
 
 	if ! "$no_upload_minio"; then
-		echo "⏳ Waiting for MinIO..."
-		wait_for_minio
+		echo "⏳ Waiting for S3..."
+		wait_for_s3
 		echo ""
 
 		upload_archive

@@ -1,24 +1,17 @@
 ################################
-# Tools
-################################
-FROM minio/mc:RELEASE.2025-07-21T05-28-08Z AS tools-mc
-FROM busybox AS tools-yq
-WORKDIR /tools
-RUN wget https://github.com/mikefarah/yq/releases/download/v4.47.2/yq_linux_amd64 -O yq && chmod +x yq
-
-################################
 # Runner
 ################################
 FROM debian AS runner
 
 RUN apt update && apt upgrade -y \
     && apt install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates unzip \
     && apt clean \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=tools-yq /tools/yq /usr/bin/yq
-COPY --from=tools-mc /usr/bin/mc /usr/bin/mc
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/aws /tmp/awscliv2.zip
 
 COPY lib.sh /lib.sh
 COPY entrypoint_cleanup.sh /entrypoint.sh
