@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/server"]
+members = ["crates/core", "crates/server", "crates/pbf-patch"]
 
 [workspace.package]
 version = "0.2.1" # x-release-please-version

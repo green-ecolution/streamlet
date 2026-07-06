@@ -1,0 +1,23 @@
+[package]
+name = "pbf-patch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Generates OSC changesets and patched OSM PBF files for the tile pipeline"
+readme = "../../README.md"
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pbf-patch"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
