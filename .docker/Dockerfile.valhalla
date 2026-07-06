@@ -1,0 +1,26 @@
+################################
+# Tools
+################################
+FROM minio/mc:RELEASE.2025-07-21T05-28-08Z AS tools-mc
+
+
+################################
+# Runner
+################################
+FROM ghcr.io/valhalla/valhalla-scripted:3.6.0 AS runner
+
+COPY --from=tools-mc /usr/bin/mc /usr/bin/mc
+
+RUN useradd -ms /usr/bin/bash -u 1001 valhalla && chmod 777 /custom_files
+USER valhalla
+
+COPY lib.sh generate-lib.sh valhalla.json /
+COPY entrypoint_valhalla.sh /entrypoint.sh
+
+ENV use_default_speeds_config="True"
+ENV force_rebuild="True"
+ENV serve_tiles="False"
+ENV build_elevation="True"
+ENV DATA_DIR="."
+ENV VALHALLA_CONFIG_FILE=/valhalla.json
+ENTRYPOINT [ "/entrypoint.sh", "-b" ]

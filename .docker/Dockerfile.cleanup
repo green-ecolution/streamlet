@@ -1,0 +1,29 @@
+################################
+# Tools
+################################
+FROM minio/mc:RELEASE.2025-07-21T05-28-08Z AS tools-mc
+FROM busybox AS tools-yq
+WORKDIR /tools
+RUN wget https://github.com/mikefarah/yq/releases/download/v4.47.2/yq_linux_amd64 -O yq && chmod +x yq
+
+################################
+# Runner
+################################
+FROM debian AS runner
+
+RUN apt update && apt upgrade -y \
+    && apt install -y --no-install-recommends \
+    curl ca-certificates \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools-yq /tools/yq /usr/bin/yq
+COPY --from=tools-mc /usr/bin/mc /usr/bin/mc
+
+COPY lib.sh /lib.sh
+COPY entrypoint_cleanup.sh /entrypoint.sh
+
+RUN useradd -ms /bin/sh -u 1000 runner
+USER runner
+
+ENTRYPOINT [ "/entrypoint.sh" ]
