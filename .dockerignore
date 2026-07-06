@@ -1,0 +1,4 @@
+target/
+.git/
+.direnv/
+docs/

@@ -1,0 +1,28 @@
+################################
+# Builder
+################################
+FROM rust:1.88-slim AS builder
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo build --release -p pbf-patch
+
+################################
+# Runner
+################################
+FROM debian:bookworm-slim AS runner
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    osmium-tool curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -ms /usr/bin/sh -u 1000 runner
+USER runner
+WORKDIR /files
+RUN mkdir -p output
+
+ENV DATA_DIR="."
+COPY --from=builder /app/target/release/pbf-patch /pbf-patch
+COPY .docker/entrypoint_pbf-patch.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
