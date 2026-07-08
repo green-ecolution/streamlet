@@ -1,0 +1,49 @@
+name: Docker Build Check
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".docker/**"
+      - ".dockerignore"
+      - ".github/workflows/docker-build.yaml"
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: server
+            context: .
+            file: .docker/Dockerfile.server
+          - image: pbf-patch
+            context: .
+            file: .docker/Dockerfile.pbf-patch
+          - image: generate-valhalla
+            context: .docker
+            file: .docker/Dockerfile.valhalla
+          - image: cleanup-tiles
+            context: .docker
+            file: .docker/Dockerfile.cleanup
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}
